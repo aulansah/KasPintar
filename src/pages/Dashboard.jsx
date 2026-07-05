@@ -9,6 +9,7 @@ import CicilanTable from "../components/cicilan/CicilanTable";
 import LivingCostTable from "../components/living/LivingCostTable";
 import FamilyTable from "../components/family/FamilyTable";
 import FinanceCharts from "../components/charts/FinanceCharts";
+import TransactionModal from "../components/dashboard/TransactionModal";
 
 import { useAuth } from "../hooks/useAuth";
 
@@ -20,6 +21,7 @@ import {
   createLivingCostItem, updateLivingCostItem, deleteLivingCostItem,
 } from "../services/livingCostService";
 import { getFamilyItemsBySummaryIds, upsertFamilyItem } from "../services/familyService";
+import { getTransactions } from "../services/transactionService";
 import { exportToCSV } from "../services/exportService";
 
 import { debtMonthTotal, categoryAmount, totalLivingCost } from "../utils/calculate";
@@ -31,11 +33,17 @@ export default function Dashboard() {
   const [debtMap, setDebtMap] = useState({});       // { summaryId: debtItem[] }
   const [livingMap, setLivingMap] = useState({});   // { summaryId: category[] }
   const [familyMap, setFamilyMap] = useState({});   // { summaryId: familyItem }
+  const [transactionMap, setTransactionMap] = useState({}); // { itemId: totalSpent }
 
   const [activeTab, setActiveTab] = useState("summary");
   const [modalOpen, setModalOpen] = useState(false);
   const [editingRow, setEditingRow] = useState(null);
   const [loading, setLoading] = useState(true);
+
+  // Transaction Modal State
+  const [txModalOpen, setTxModalOpen] = useState(false);
+  const [txModalItem, setTxModalItem] = useState(null);
+  const [txModalType, setTxModalType] = useState("living_cost");
 
   // ─── Load all data ─────────────────────────────────────────────────────
   const loadAll = useCallback(async () => {
@@ -48,15 +56,17 @@ export default function Dashboard() {
         setDebtMap({});
         setLivingMap({});
         setFamilyMap({});
+        setTransactionMap({});
         return;
       }
 
       const ids = rows.map((r) => r.id);
 
-      const [debtItems, livingCats, famItems] = await Promise.all([
+      const [debtItems, livingCats, famItems, txLogs] = await Promise.all([
         getDebtItemsBySummaryIds(ids),
         getLivingCostCategoriesBySummaryIds(ids),
         getFamilyItemsBySummaryIds(ids),
+        getTransactions(user.id),
       ]);
 
       // Build debtMap
@@ -83,6 +93,15 @@ export default function Dashboard() {
         fm[fi.summary_id] = fi;
       });
       setFamilyMap(fm);
+
+      // Build transactionMap (aggregate sum of transactions per item)
+      const tm = {};
+      txLogs.forEach((tx) => {
+        if (!tm[tx.item_id]) tm[tx.item_id] = 0;
+        tm[tx.item_id] += Number(tx.amount || 0);
+      });
+      setTransactionMap(tm);
+
     } catch (err) {
       console.error(err);
     } finally {
@@ -91,6 +110,22 @@ export default function Dashboard() {
   }, [user]);
 
   useEffect(() => { loadAll(); }, [loadAll]);
+
+  // Reload transactions after dynamic changes
+  const reloadTransactions = async () => {
+    if (!user) return;
+    try {
+      const txLogs = await getTransactions(user.id);
+      const tm = {};
+      txLogs.forEach((tx) => {
+        if (!tm[tx.item_id]) tm[tx.item_id] = 0;
+        tm[tx.item_id] += Number(tx.amount || 0);
+      });
+      setTransactionMap(tm);
+    } catch (err) {
+      console.error(err);
+    }
+  };
 
   // ─── Derived aggregates for widgets ───────────────────────────────────
   const { sums, negativeMonths, periodLabel } = useMemo(() => {
@@ -124,29 +159,6 @@ export default function Dashboard() {
       periodLabel: label,
     };
   }, [summaries]);
-
-  // ─── Sync helper: recalculate & persist column totals to monthly_summary ──
-  async function syncSummaryTotals(summaryId) {
-    // Cicilan total
-    const cicilanTotal = debtMonthTotal(debtMap[summaryId] ?? []);
-    // Living cost total
-    const lcCats = livingMap[summaryId] ?? [];
-    const lcTotal = totalLivingCost(lcCats);
-    // Family total
-    const fam = familyMap[summaryId];
-    const keluargaTotal =
-      Number(fam?.ortu || 0) + Number(fam?.adik || 0) + Number(fam?.tak_terduga || 0);
-
-    await updateSummary(summaryId, {
-      cicilan: cicilanTotal,
-      living_cost: lcTotal,
-      keluarga: keluargaTotal,
-    });
-
-    // Refresh summary rows
-    const rows = await getMonthlySummary(user.id);
-    setSummaries(rows);
-  }
 
   // ─── Summary CRUD ──────────────────────────────────────────────────────
   function handleAddMonth() {
@@ -404,6 +416,13 @@ export default function Dashboard() {
     exportToCSV({ summaries, debtMap, livingMap, familyMap });
   }
 
+  // ─── Open Transactions Modal ───────────────────────────────────────────
+  function handleOpenTransactions(item, type) {
+    setTxModalItem(item);
+    setTxModalType(type);
+    setTxModalOpen(true);
+  }
+
   // ─── Render ────────────────────────────────────────────────────────────
   if (loading) {
     return (
@@ -440,9 +459,11 @@ export default function Dashboard() {
         <CicilanTable
           summaries={summaries}
           debtMap={debtMap}
+          transactionMap={transactionMap}
           onAddItem={handleAddDebtItem}
           onUpdateItem={handleUpdateDebtItem}
           onDeleteItem={handleDeleteDebtItem}
+          onOpenTransactions={handleOpenTransactions}
         />
       )}
 
@@ -450,12 +471,14 @@ export default function Dashboard() {
         <LivingCostTable
           summaries={summaries}
           livingMap={livingMap}
+          transactionMap={transactionMap}
           onAddCategory={handleAddCategory}
           onUpdateCategory={handleUpdateCategory}
           onDeleteCategory={handleDeleteCategory}
           onAddItem={handleAddLivingItem}
           onUpdateItem={handleUpdateLivingItem}
           onDeleteItem={handleDeleteLivingItem}
+          onOpenTransactions={handleOpenTransactions}
         />
       )}
 
@@ -477,6 +500,15 @@ export default function Dashboard() {
         editingData={editingRow}
         onClose={() => { setModalOpen(false); setEditingRow(null); }}
         onSave={handleSaveMonth}
+      />
+
+      {/* Transactions History/Input Modal */}
+      <TransactionModal
+        open={txModalOpen}
+        item={txModalItem}
+        itemType={txModalType}
+        onClose={() => { setTxModalOpen(false); setTxModalItem(null); }}
+        onSaveSuccess={reloadTransactions}
       />
 
     </DashboardLayout>
