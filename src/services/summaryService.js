@@ -5,12 +5,23 @@ export async function getMonthlySummary(userId) {
   const { data, error } = await supabase
     .from("monthly_summary")
     .select("*")
-    .eq("user_id", userId)
-    .order("tahun", { ascending: true })
-    .order("id", { ascending: true });
+    .eq("user_id", userId);
 
   if (error) throw error;
-  return data ?? [];
+
+  const monthOrder = {
+    "Januari": 1, "Februari": 2, "Maret": 3, "April": 4, "Mei": 5, "Juni": 6,
+    "Juli": 7, "Agustus": 8, "September": 9, "Oktober": 10, "November": 11, "Desember": 12
+  };
+
+  const sorted = (data ?? []).sort((a, b) => {
+    if (a.tahun !== b.tahun) {
+      return a.tahun - b.tahun;
+    }
+    return (monthOrder[a.bulan] || 0) - (monthOrder[b.bulan] || 0);
+  });
+
+  return sorted;
 }
 
 /** Buat satu baris summary baru */
