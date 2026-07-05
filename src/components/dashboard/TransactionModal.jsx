@@ -2,8 +2,10 @@ import { useState, useEffect, useRef } from "react";
 import { X, Plus, Trash2, Calendar, DollarSign, FileText } from "lucide-react";
 import { getTransactionsByItemId, createTransaction, deleteTransaction } from "../../services/transactionService";
 import { toRupiah, parseRupiah } from "../../utils/format";
+import { useAuth } from "../../hooks/useAuth";
 
 export default function TransactionModal({ open, item, itemType, onClose, onSaveSuccess }) {
+  const { user } = useAuth();
   const [transactions, setTransactions] = useState([]);
   const [loading, setLoading] = useState(false);
   const [form, setForm] = useState({ amount: "", note: "", date: "" });
@@ -52,7 +54,7 @@ export default function TransactionModal({ open, item, itemType, onClose, onSave
     setSaving(true);
     try {
       const newTx = await createTransaction({
-        user_id: item.user_id,
+        user_id: user.id,
         item_id: item.id,
         item_type: itemType,
         amount: parsedAmt,
